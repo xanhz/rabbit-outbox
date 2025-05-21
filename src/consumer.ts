@@ -10,7 +10,7 @@ const logger = new Logger('Consumer');
 
 async function main() {
   const rabbit = new RabbitConnection({
-    connect: process.env.RABBITMQ_URL,
+    connect: process.env.RABBITMQ_URI as string,
   });
   await rabbit.assertExchange('ORDER.CREATED', 'fanout', { durable: true, autoDelete: false });
   await rabbit.assertRetryableQueue('order-counter', 5_000, { durable: true, autoDelete: false });

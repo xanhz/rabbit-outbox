@@ -66,17 +66,17 @@ export class OutboxRunner {
     );
 
     stream.on('change', (change: mongoose.mongo.ChangeStreamInsertDocument) => {
-      this.queue.push(async () => {
-        try {
+      this.queue.push({
+        execute: async () => {
           this.logger.info('Processing outbox insert with token=%j', change._id);
           await this.publish(change.fullDocument as any);
           await this.Outbox.updateOne({ _id: change.documentKey._id }, { $set: { sent: true, sentAt: new Date() } });
           this.logger.info('Mark current token=%j', change._id);
           await this.resumeTokenManager.set(change._id);
-        } catch (error) {
-          this.logger.error(error);
-          await TimerUtils.delay(1_000);
-          this.queue.flush();
+        },
+        onerror: (e) => {
+          this.logger.error(e);
+          this.queue.clear();
           this.run();
         }
       });
@@ -88,7 +88,7 @@ export class OutboxRunner {
         .close()
         .then(() => TimerUtils.delay(1_000))
         .then(() => {
-          this.queue.flush();
+          this.queue.clear();
           this.run();
         })
         .catch(_.noop);
@@ -100,7 +100,7 @@ export class OutboxRunner {
         .close()
         .then(() => TimerUtils.delay(1_000))
         .then(() => {
-          this.queue.flush();
+          this.queue.clear();
           this.run();
         })
         .catch(_.noop);

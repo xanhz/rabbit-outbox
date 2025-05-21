@@ -1,30 +1,42 @@
-type Task = () => Promise<any>;
+interface Task<TResult = any> {
+  execute(): Promise<TResult>;
+  onerror?(e: unknown): any;
+}
+
+class TaskNode {
+  constructor(public task: Task, public next?: TaskNode) {}
+}
 
 export class TaskQueue {
-  protected tasks: Task[];
-  protected top: number;
+  protected head?: TaskNode;
+  protected tail?: TaskNode;
   protected running: boolean;
 
   constructor() {
-    this.tasks = [];
-    this.top = 0;
     this.running = false;
   }
 
-  public empty() {
-    return this.top >= this.tasks.length;
-  }
-
   public push(task: Task) {
-    this.tasks.push(task);
+    if (!this.head) {
+      this.head = this.tail = new TaskNode(task);
+    } else {
+      this.tail!.next = new TaskNode(task);
+      this.tail = this.tail!.next;
+    }
     this.run();
   }
 
   protected pop() {
-    const task = this.tasks[this.top++];
-    if (this.top >= this.tasks.length) {
-      this.tasks = [];
-      this.top = 0;
+    if (!this.head) {
+      return undefined;
+    }
+    const task = this.head.task;
+    if (this.head === this.tail) {
+      this.head = this.tail = undefined;
+    } else {
+      const next = this.head.next;
+      this.head.next = undefined;
+      this.head = next;
     }
     return task;
   }
@@ -34,18 +46,26 @@ export class TaskQueue {
       return;
     }
     this.running = true;
-    while (!this.empty()) {
-      const task = this.pop();
+    for (let task = this.pop(); task != null; ) {
       try {
-        await task();
-      } catch {}
+        await task.execute();
+      } catch (error) {
+        task.onerror?.(error);
+      } finally {
+        task = this.pop();
+      }
     }
     this.running = false;
   }
 
-  public flush() {
-    this.tasks = [];
-    this.top = 0;
+  public clear() {
+    let node = this.head;
+    while (node) {
+      const next = node.next;
+      node.next = undefined;
+      node = next;
+    }
+    this.head = this.tail = undefined;
     return this;
   }
 }

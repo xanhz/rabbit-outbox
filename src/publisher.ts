@@ -12,9 +12,9 @@ const logger = new Logger('Publisher');
 
 async function main() {
   const rabbit = new RabbitConnection({
-    connect: process.env.RABBITMQ_URL,
+    connect: process.env.RABBITMQ_URI as string,
   });
-  const redis = new Redis();
+  const redis = new Redis(process.env.REDIS_URI as string);
 
   await rabbit.assertExchange('ORDER.CREATED', 'fanout', { durable: true, autoDelete: false });
   await rabbit.assertRetryableQueue('order-counter', 5_000, { durable: true, autoDelete: false });
