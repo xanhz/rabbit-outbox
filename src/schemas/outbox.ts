@@ -4,7 +4,6 @@ const OutboxSchema = new Schema(
   {
     event: {
       type: Schema.Types.String,
-      index: true,
       required: true,
     },
 
@@ -14,7 +13,6 @@ const OutboxSchema = new Schema(
 
     sent: {
       type: Schema.Types.Boolean,
-      index: true,
       default: false,
       required: true,
     },
@@ -31,6 +29,7 @@ const OutboxSchema = new Schema(
   },
   {
     timestamps: false,
+    collection: 'outbox',
   }
 );
 

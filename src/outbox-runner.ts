@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import mongoose from 'mongoose';
 import { Logger } from './logger';
+import { ResumeTokenManager } from './resume-token-manager';
 import { TaskQueue } from './task-queue';
 import { TimerUtils } from './utils';
 
@@ -32,11 +33,6 @@ export abstract class OutboxRunner {
   public abstract start(): Promise<void>;
 
   public abstract stop(): Promise<void>;
-}
-
-export interface ResumeTokenManager {
-  get(): Promise<mongoose.mongo.ResumeToken>;
-  set(token: mongoose.mongo.ResumeToken): Promise<any>;
 }
 
 export interface PushOutboxRunnerConfig extends OutboxRunnerConfig {

@@ -1,10 +1,9 @@
 import dotenv from 'dotenv';
-import { Redis } from 'ioredis';
-import _ from 'lodash';
 import mongoose from 'mongoose';
 import { Logger } from './logger';
 import { PollOutboxRunner, PushOutboxRunner } from './outbox-runner';
 import { RabbitConnection } from './rabbit';
+import { FileResumeTokenManager } from './resume-token-manager';
 
 dotenv.config({});
 
@@ -14,7 +13,6 @@ async function main() {
   const rabbit = new RabbitConnection({
     connect: process.env.RABBITMQ_URI as string,
   });
-  const redis = new Redis(process.env.REDIS_URI as string);
 
   await rabbit.assertExchange('ORDER.CREATED', 'fanout', { durable: true, autoDelete: false });
   await rabbit.assertRetryableQueue('order-counter', 5_000, { durable: true, autoDelete: false });
@@ -28,39 +26,8 @@ async function main() {
   const Order = connection.model('Order', OrderSchema);
   const Outbox = connection.model('Outbox', OutboxSchema);
 
-  // const runner = new PushOutboxRunner({
-  //   Outbox: Outbox as mongoose.Model<any>,
-  //   publish: doc => {
-  //     return rabbit.publish({
-  //       topic: doc.event,
-  //       type: 'fanout',
-  //       content: {
-  //         event: doc.event,
-  //         payload: doc.payload,
-  //       },
-  //       options: {
-  //         persistent: true,
-  //         messageId: `${doc._id}`,
-  //         timestamp: doc.createdAt.getTime(),
-  //       },
-  //     });
-  //   },
-  //   resumeTokenManager: {
-  //     async get() {
-  //       const token = await redis.get('change-streams:outbox:resume-token');
-  //       if (_.isEmpty(token)) {
-  //         return undefined;
-  //       }
-  //       return JSON.parse(token as any);
-  //     },
-  //     set(token) {
-  //       return redis.set('change-streams:outbox:resume-token', JSON.stringify(token, undefined, 0));
-  //     },
-  //   },
-  // });
-
-  const runner = new PollOutboxRunner({
-    interval: 5 * 1000,
+  const runner = new PushOutboxRunner({
+    resumeTokenManager: new FileResumeTokenManager('.temp/token.json'),
     Outbox: Outbox as mongoose.Model<any>,
     publish: doc => {
       return rabbit.publish({
@@ -78,6 +45,26 @@ async function main() {
       });
     },
   });
+
+  // const runner = new PollOutboxRunner({
+  //   interval: 5 * 1000,
+  //   Outbox: Outbox as mongoose.Model<any>,
+  //   publish: doc => {
+  //     return rabbit.publish({
+  //       topic: doc.event,
+  //       type: 'fanout',
+  //       content: {
+  //         event: doc.event,
+  //         payload: doc.payload,
+  //       },
+  //       options: {
+  //         persistent: true,
+  //         messageId: `${doc._id}`,
+  //         timestamp: doc.createdAt.getTime(),
+  //       },
+  //     });
+  //   },
+  // });
 
   runner.start();
 
