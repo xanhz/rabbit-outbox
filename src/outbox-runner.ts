@@ -13,45 +13,57 @@ export interface OutboxDocument<TPayload = any> {
   sentAt?: Date;
 }
 
-export interface ResumeTokenManager {
-  get(): Promise<mongoose.mongo.ResumeToken>;
-  set(token: mongoose.mongo.ResumeToken): Promise<any>;
-}
-
 export interface OutboxRunnerConfig {
   Outbox: mongoose.Model<OutboxDocument>;
   publish: (doc: OutboxDocument) => Promise<any>;
-  resumeTokenManager: ResumeTokenManager;
 }
 
-export class OutboxRunner {
+export abstract class OutboxRunner {
   protected logger: Logger;
   protected Outbox: mongoose.Model<OutboxDocument>;
   protected publish: (doc: OutboxDocument) => Promise<any>;
-  protected resumeTokenManager: ResumeTokenManager;
-  protected queue: TaskQueue;
-  protected running: boolean;
 
   constructor(config: OutboxRunnerConfig) {
     this.logger = new Logger(this.constructor.name);
     this.Outbox = config.Outbox;
     this.publish = config.publish;
-    this.resumeTokenManager = config.resumeTokenManager;
-    this.queue = new TaskQueue();
-    this.running = false;
   }
 
-  public start() {
-    if (this.running) {
+  public abstract start(): Promise<void>;
+
+  public abstract stop(): Promise<void>;
+}
+
+export interface ResumeTokenManager {
+  get(): Promise<mongoose.mongo.ResumeToken>;
+  set(token: mongoose.mongo.ResumeToken): Promise<any>;
+}
+
+export interface PushOutboxRunnerConfig extends OutboxRunnerConfig {
+  resumeTokenManager: ResumeTokenManager;
+}
+
+export class PushOutboxRunner extends OutboxRunner {
+  protected resumeTokenManager: ResumeTokenManager;
+  protected queue: TaskQueue;
+  protected stream!: mongoose.mongo.ChangeStream;
+
+  constructor(config: PushOutboxRunnerConfig) {
+    super(config);
+    this.queue = new TaskQueue();
+    this.resumeTokenManager = config.resumeTokenManager;
+  }
+
+  public override start() {
+    if (this.stream) {
       return Promise.resolve(void 0);
     }
-    this.running = true;
     return this.run();
   }
 
   private async run() {
     const resumeToken = await this.resumeTokenManager.get();
-    const stream = this.Outbox.watch(
+    this.stream = this.Outbox.watch(
       [
         {
           $match: {
@@ -65,7 +77,7 @@ export class OutboxRunner {
       }
     );
 
-    stream.on('change', (change: mongoose.mongo.ChangeStreamInsertDocument) => {
+    this.stream.on('change', (change: mongoose.mongo.ChangeStreamInsertDocument) => {
       this.queue.push({
         execute: async () => {
           this.logger.info('Processing outbox insert with token=%j', change._id);
@@ -74,36 +86,71 @@ export class OutboxRunner {
           this.logger.info('Mark current token=%j', change._id);
           await this.resumeTokenManager.set(change._id);
         },
-        onerror: (e) => {
+        onerror: e => {
           this.logger.error(e);
           this.queue.clear();
           this.run();
-        }
+        },
       });
     });
 
-    stream.once('error', err => {
+    this.stream.once('error', err => {
       this.logger.error(err);
-      stream
-        .close()
-        .then(() => TimerUtils.delay(1_000))
-        .then(() => {
-          this.queue.clear();
-          this.run();
-        })
-        .catch(_.noop);
+      this.stream.close().catch(_.noop);
+      this.queue.clear();
+      TimerUtils.delay(1_000).then(() => this.run());
     });
 
-    stream.once('end', () => {
+    this.stream.once('end', () => {
       this.logger.warn('Change stream ended. Restarting...');
-      stream
-        .close()
-        .then(() => TimerUtils.delay(1_000))
-        .then(() => {
-          this.queue.clear();
-          this.run();
-        })
-        .catch(_.noop);
+      this.stream.close().catch(_.noop);
+      this.queue.clear();
+      TimerUtils.delay(1_000).then(() => this.run());
     });
+  }
+
+  public override stop() {
+    if (this.stream) {
+      return this.stream.close();
+    }
+    return Promise.resolve(void 0);
+  }
+}
+
+export interface PollOutboxRunnerConfig extends OutboxRunnerConfig {
+  interval: number;
+}
+
+export class PollOutboxRunner extends OutboxRunner {
+  protected timer: NodeJS.Timeout;
+  protected running: boolean;
+
+  constructor(config: PollOutboxRunnerConfig) {
+    super(config);
+    this.running = false;
+    this.timer = setInterval(() => this.start(), config.interval);
+  }
+
+  public override async start() {
+    if (this.running) {
+      return Promise.resolve(void 0);
+    }
+    this.running = true;
+    const unsents = await this.Outbox.find({ sent: false }).lean();
+    for (const unsent of unsents) {
+      try {
+        await this.publish(unsent);
+        await this.Outbox.updateOne({ _id: unsent._id }, { $set: { sent: true, sentAt: new Date() } });
+      } catch (error) {
+        this.logger.error(error);
+        break;
+      }
+    }
+    this.running = false;
+  }
+
+  public override stop() {
+    clearInterval(this.timer);
+    return Promise.resolve(void 0);
   }
 }

@@ -1,6 +1,6 @@
 import { Schema } from 'mongoose';
 
-export const OutboxSchema = new Schema(
+const OutboxSchema = new Schema(
   {
     event: {
       type: Schema.Types.String,
@@ -33,3 +33,9 @@ export const OutboxSchema = new Schema(
     timestamps: false,
   }
 );
+
+OutboxSchema.index({ event: 1, createdAt: 1 });
+OutboxSchema.index({ sent: 1 }, { partialFilterExpression: { sent: false } });
+OutboxSchema.index({ createdAt: 1 }, { expires: '90d' }); // expires after 90 days
+
+export { OutboxSchema };

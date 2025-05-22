@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import _ from 'lodash';
 import mongoose from 'mongoose';
 import { Logger } from './logger';
-import { OutboxRunner } from './outbox-runner';
+import { PollOutboxRunner, PushOutboxRunner } from './outbox-runner';
 import { RabbitConnection } from './rabbit';
 
 dotenv.config({});
@@ -28,7 +28,39 @@ async function main() {
   const Order = connection.model('Order', OrderSchema);
   const Outbox = connection.model('Outbox', OutboxSchema);
 
-  const runner = new OutboxRunner({
+  // const runner = new PushOutboxRunner({
+  //   Outbox: Outbox as mongoose.Model<any>,
+  //   publish: doc => {
+  //     return rabbit.publish({
+  //       topic: doc.event,
+  //       type: 'fanout',
+  //       content: {
+  //         event: doc.event,
+  //         payload: doc.payload,
+  //       },
+  //       options: {
+  //         persistent: true,
+  //         messageId: `${doc._id}`,
+  //         timestamp: doc.createdAt.getTime(),
+  //       },
+  //     });
+  //   },
+  //   resumeTokenManager: {
+  //     async get() {
+  //       const token = await redis.get('change-streams:outbox:resume-token');
+  //       if (_.isEmpty(token)) {
+  //         return undefined;
+  //       }
+  //       return JSON.parse(token as any);
+  //     },
+  //     set(token) {
+  //       return redis.set('change-streams:outbox:resume-token', JSON.stringify(token, undefined, 0));
+  //     },
+  //   },
+  // });
+
+  const runner = new PollOutboxRunner({
+    interval: 5 * 1000,
     Outbox: Outbox as mongoose.Model<any>,
     publish: doc => {
       return rabbit.publish({
@@ -45,19 +77,8 @@ async function main() {
         },
       });
     },
-    resumeTokenManager: {
-      async get() {
-        const token = await redis.get('change-streams:outbox:resume-token');
-        if (_.isEmpty(token)) {
-          return undefined;
-        }
-        return JSON.parse(token as any);
-      },
-      set(token) {
-        return redis.set('change-streams:outbox:resume-token', JSON.stringify(token, undefined, 0));
-      },
-    },
   });
+
   runner.start();
 
   setInterval(() => {
